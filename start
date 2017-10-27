@@ -1,0 +1,193 @@
+''' Module containing test cases for the EC2 instance class'''
+import unittest
+import datetime
+import json
+from pytz import timezone
+from EC2Instance import EC2Instance, InstanceState
+
+CTTIMEZONE = timezone("US/Central")
+UTCTIMEZONE = timezone('UTC')
+
+class EC2TestWithStandardSchedule(unittest.TestCase):
+    ''' Test class Schedule: {"tz": "US/Central", "sched1": "2-6:0500-2000", "enforce": "Both" }'''
+    def setUp(self):
+        with open('./test/ec2StandardSched.json') as data_file:
+            self.instance = json.load(data_file)
+
+    def test_desired_state_during_the_week(self):
+        ''' During the workweek the desired state should be running. '''
+        testdate = datetime.datetime(2017, 7, 28, 12,
+                                     tzinfo=CTTIMEZONE)  # date=July, 28th(Fri) 2017 at noon
+        ec2 = EC2Instance(self.instance, testdate)
+        self.assertTrue(
+            ec2.desired_state == InstanceState.running,
+            msg='Desired State Not set to running')
+
+    def test_desired_state_on_the_weekend(self):
+        ''' During the weekend the running state should be stopped '''
+        testdate = datetime.datetime(2017, 7, 29, 12,
+                                     tzinfo=CTTIMEZONE)  # date=July, 29th(Sat) 2017 at noon
+        ec2 = EC2Instance(self.instance, testdate)
+        self.assertTrue(
+            ec2.desired_state == InstanceState.stopped,
+            msg='Desired State Not set to running')
+
+class EC2TestWithWeekendSchedule(unittest.TestCase):
+    ''' Test class Schedule: {"tz": "US/Central", "sched1": "2-6:0500-2000", "enforce": "Both" }'''
+    def setUp(self):
+        with open('./test/ec2StandardWeekend.json') as data_file:
+            self.instance = json.load(data_file)
+
+    def test_desired_state_during_saturday(self):
+        ''' During the weekend the desired state should be running. '''
+        testdate = datetime.datetime(2017, 7, 29, 12,
+                                     tzinfo=CTTIMEZONE)  # date=July, 29th(Sat) 2017 at noon
+        ec2 = EC2Instance(self.instance, testdate)
+        self.assertTrue(
+            ec2.desired_state == InstanceState.running,
+            msg='Desired State Not set to running')
+
+    def test_desired_state_during_sunday(self):
+        ''' During the weekend the running state should be running '''
+        testdate = datetime.datetime(2017, 7, 30, 12,
+                                     tzinfo=CTTIMEZONE)  # date=July, 29th(Sat) 2017 at noon
+        ec2 = EC2Instance(self.instance, testdate)
+        self.assertTrue(
+            ec2.desired_state == InstanceState.running,
+            msg='Desired State Not set to running')
+
+    def test_desired_state_during_sunday_evening(self):
+        ''' During the weekend evening the running state should be stopped '''
+        testdate = datetime.datetime(2017, 7, 30, 21,
+                                     tzinfo=CTTIMEZONE)  # date=July, 29th(Sat) 2017 at 9pm
+        ec2 = EC2Instance(self.instance, testdate)
+        self.assertTrue(
+            ec2.desired_state == InstanceState.stopped,
+            msg='Desired State Not set to running')
+
+class EC2TestWithEnforceOff(unittest.TestCase):
+    ''' Test class Schedule: { "tz": "US/Central", "sched1": "2-6:0700-0705", "enforce": "off" }'''
+    def setUp(self):
+        with open('./test/ec2EnforceOff.json') as data_file:
+            self.instance = json.load(data_file)
+
+    def test_beginning_of_the_day(self):
+        ''' During the week at 7:01 the desired state should be stopped '''
+        testdate = datetime.datetime(2017, 7, 28, 7, 1,
+                                     tzinfo=CTTIMEZONE)  # date=July,28th(Fri) 2017 at 7:01
+        ec2 = EC2Instance(self.instance, testdate)
+        self.assertEqual(
+            ec2.desired_state,
+            InstanceState.stopped,
+            msg=f"Desired is not stopped: EC2 State:{ec2}")
+
+    def test_after_schedule_window(self):
+        ''' During the week at noon the desired state should not be inforced '''
+        testdate = datetime.datetime(2017, 7, 28, 12,
+                                     tzinfo=CTTIMEZONE)  # date=July,28th(Fri) 2017 at noon
+        ec2 = EC2Instance(self.instance, testdate)
+        self.assertEqual(
+            ec2.desired_state,
+            InstanceState.either,
+            msg=f"Desired is not either: EC2 State:{ec2}")
+
+class EC2TestWithEnforceOn(unittest.TestCase):
+    ''' Test class Schedule: { "tz": "US/Central", "sched1": "2-6:0700-0705", "enforce": "on" }'''
+    def setUp(self):
+        with open('./test/ec2EnforceOn.json') as data_file:
+            self.instance = json.load(data_file)
+        self.timezone = "US/Central"
+
+    def test_beginning_of_the_day(self):
+        ''' During the week at 7:01 the desired state should be running '''
+        testdate = datetime.datetime(2017, 7, 28, 7, 1,
+                                     tzinfo=CTTIMEZONE)  # date=July,28th(Fri) 2017 at 7:01
+        ec2 = EC2Instance(self.instance, testdate)
+        self.assertEqual(
+            ec2.desired_state,
+            InstanceState.running,
+            msg=f"Desired is not running: actual desired state:{ec2.desired_state}")
+
+    def test_after_schedule_window(self):
+        ''' During the week at noon the desired state should not be inforced '''
+        testdate = datetime.datetime(2017, 7, 28, 12,
+                                     tzinfo=CTTIMEZONE)  # date=July,28th(Fri) 2017 at noon
+        ec2 = EC2Instance(self.instance, testdate)
+        self.assertEqual(
+            ec2.desired_state,
+            InstanceState.either,
+            msg=f"Desired is not either: EC2 State:{ec2}")
+
+class EC2TestWithMaintenanceWindow(unittest.TestCase):
+    '''
+    Test class with autopatch:
+        {\"tz\":\"CST\",\"months\": [1,3,6,9],\"day\": \"SUN#2\",\"start\": \"16:00\"}
+    '''
+    def setUp(self):
+        with open('./test/ec2MaintWindow.json') as data_file:
+            self.instance = json.load(data_file)
+
+    def test_during_maint_window(self):
+        ''' During the maintenance window under maint window should be true '''
+        testdate = datetime.datetime(2017, 9, 10, 16,
+                                     tzinfo=CTTIMEZONE)  # date=Sep, 10th (2nd Sun) 2017 at 16:00
+        ec2 = EC2Instance(self.instance, testdate)
+        self.assertTrue(
+            ec2.under_maint,
+            msg='Server not under maintenance mode')
+
+    def test_sending_different_timezone(self):
+        ''' During the maintenance window under maint should be true regardless of timezone '''
+
+        testdate = datetime.datetime(2017, 9, 10, 21,
+                                     tzinfo=UTCTIMEZONE)  # date=Sep, 10th (2nd Sun) 2017 at 16:00
+        ec2 = EC2Instance(self.instance, testdate)
+        self.assertTrue(
+            ec2.under_maint,
+            msg='Server not under maintenance mode')
+
+    def test_30_prior_to_maint_window(self):
+        ''' 30 minutes prior to the maintenance window under_maint window should be true '''
+        testdate = datetime.datetime(2017, 9, 10, 15, 30,
+                                     tzinfo=CTTIMEZONE)  # date=Sep, 10th (2nd Sun) 2017 at 16:00
+        ec2 = EC2Instance(self.instance, testdate)
+        self.assertTrue(
+            ec2.under_maint,
+            msg='Server not under maintenance mode')
+
+    def test_4_hour_after_to_maint_window(self):
+        ''' 4 hours after the maintenance window under_maint window should be true '''
+        testdate = datetime.datetime(2017, 9, 10, 19,
+                                     tzinfo=CTTIMEZONE)  # date=Sep, 10th (2nd Sun) 2017 at 16:00
+        ec2 = EC2Instance(self.instance, testdate)
+        self.assertTrue(
+            ec2.under_maint,
+            msg='Server not under maintenance mode')
+
+    def test_out_of_maint_window(self):
+        ''' During the week at 7:01 the desired state should be running '''
+        testdate = datetime.datetime(2017, 9, 10, 12,
+                                     tzinfo=CTTIMEZONE)  # date=Sep, 10th (2nd Sun) 2017 at 12:00
+        ec2 = EC2Instance(self.instance, testdate)
+        self.assertFalse(
+            ec2.under_maint,
+            msg='Server not under maintenance mode')
+
+class EC2TestWithInvalidSyntax(unittest.TestCase):
+    ''' Test class Schedule: "string" '''
+    def setUp(self):
+        with open('./test/ec2InvalidSyntax.json') as data_file:
+            self.instance = json.load(data_file)
+
+    def test_desired_state_during_the_week(self):
+        ''' During the workweek the desired state should be either. '''
+        testdate = datetime.datetime(2017, 7, 28, 12,
+                                     tzinfo=CTTIMEZONE)  # date=July, 28th(Fri) 2017 at noon
+        ec2 = EC2Instance(self.instance, testdate)
+        self.assertTrue(
+            ec2.desired_state == InstanceState.either,
+            msg='Desired State Not set to either')
+
+
+if __name__ == '__main__':
+    unittest.main()
